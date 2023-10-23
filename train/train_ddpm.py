@@ -40,6 +40,7 @@ def train_ddpm(conf_stage1, conf, path):
     batch_size = 256
     timesteps = conf.timesteps
     device = conf.device
+    os.makedirs(conf.zpath, exist_ok=True)
     for read_label in range(conf.epoch):
         pkl_file = conf.encodedpath
         with open(pkl_file, 'rb') as f:
@@ -61,19 +62,22 @@ def train_ddpm(conf_stage1, conf, path):
                 loss.backward()
                 optimizer.step()
             print("Loss:", loss.item())
+        # todo save diffusion model
 
-        for i in range(10):
+        for i in range(20):
             print(f"epoch {i}")
-            generated_images = gaussian_diffusion.sample(u_model, conf.resolution, batch_size=600, channels=conf.unetconfig.out_channels)
+            generated_images = gaussian_diffusion.sample(u_model, conf.resolution, batch_size=300, channels=conf.unetconfig.out_channels)
             # generate new images
-            generated_tensor = torch.from_numpy(np.array(generated_images))
-            # print(generated_tensor.size())
             imgs = generated_images[-1].squeeze()
             imgs = torch.from_numpy(imgs)
-            imgs = imgs.to(device)
+            # imgs = imgs.to(device)
 
-            images = autoencoder._module.decode(imgs)
-            for j, image in enumerate(images):
-                save_image(image,  conf.output + f'/{i * 600 + j}_{read_label}.png')
+            with open(conf.zpath + f"/{i}.pkl", 'wb') as f:
+                pickle.dump(imgs, f)
+
+            # images = autoencoder._module.decode(imgs)
+            # os.makedirs(conf.output, exist_ok=True)
+            # for j, image in enumerate(images):
+            #     save_image(image,  conf.output + f'/{i * 600 + j}_{read_label}.png')
 
 

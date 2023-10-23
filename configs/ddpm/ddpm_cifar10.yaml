@@ -11,6 +11,7 @@ timesteps: 800
 lr: 5e-4
 encodedpath: encoded/cifar10/10/encoded_dataset.pkl
 output: final_output/cifar10/10
+zpath: denoised/cifar10/10
 device: cuda
 epoch: 10
 resolution: 32

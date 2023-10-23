@@ -6,6 +6,7 @@ import time
 from omegaconf import OmegaConf
 
 from train.encode import encode
+from train.sample import sample
 from train.train_ae import train_ae
 from train.train_ddpm import train_ddpm
 
@@ -30,6 +31,14 @@ if __name__ == '__main__':
     train2_parser.add_argument('--config-stage1', type=str, help='location of the config file used to train first stage'
                                                                  'model')
     train2_parser.add_argument('--config', type=str, help='location of the config file used to train diffusion model')
+
+    # 子命令 sample
+    sample_parser = subparsers.add_parser('sample', help='Description for sample subcommand')
+    sample_parser.add_argument('--path', type=str, help='state dict files of first stage model')
+    sample_parser.add_argument('--config-stage1', type=str, help='location of the config file used to train first stage'
+                                                                 'model')
+    sample_parser.add_argument('--denoisez-path', type=str, help='denoisez pkl file path')
+    sample_parser.add_argument('--output', type=str, help='sample results path')
 
     parser.add_argument('--config', help='配置文件名称')
     args = parser.parse_args()
@@ -63,5 +72,14 @@ if __name__ == '__main__':
         conf = OmegaConf.load(f'{args.config}')
         path = args.path
         train_ddpm(conf_stage1, conf, path)
+    elif args.subcommand == 'sample':
+        print('Running sample with argument:', args.config)
+        conf_stage1 = OmegaConf.load(f'{args.config_stage1}')
+        path = args.path
+        output = args.output
+        denoisez_path = args.denoisez_path
+        sample(denoisez_path, path, conf_stage1, output)
+
+
     else:
         print('Invalid subcommand')
