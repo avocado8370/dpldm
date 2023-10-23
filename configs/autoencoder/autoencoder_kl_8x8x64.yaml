@@ -1,0 +1,33 @@
+lr: 7e-2
+monitor: "val/rec_loss"
+embed_dim: 3
+dataset_name: CIFAR10
+MNIST_MEAN:
+MNIST_STD:
+output_dir: outputs_vae/cifar10
+target_epsilon: 0.2
+num_workers: 12
+num_epochs: 30
+delta: 1e-5
+c: 1
+sigma: 1
+batch_size: 96
+device: cuda
+lossconfig:
+  target: models.losses.LPIPSWithDiscriminator
+  params:
+    disc_start: 50001
+    kl_weight: 0.000001
+    disc_weight: 0.5
+
+ddconfig:
+  double_z: True
+  z_channels: 3
+  resolution: 32
+  in_channels: 3
+  out_ch: 3
+  ch: 128
+  ch_mult: [1,2]  # num_down = len(ch_mult)-1
+  num_res_blocks: 2
+  attn_resolutions: []
+  dropout: 0.0

@@ -1,0 +1,16 @@
+unetconfig:
+  in_channels: 3
+  out_channels: 3
+  num_res_blocks: 1
+  channel_mult: [1, 2, 4]
+  attention_resolutions: [8]
+  conv_resample: true
+  model_channels: 256
+
+timesteps: 800
+lr: 5e-4
+encodedpath: encoded/cifar10/10/encoded_dataset.pkl
+output: final_output/cifar10/10
+device: cuda
+epoch: 10
+resolution: 32
