@@ -27,6 +27,7 @@ def train_ae(conf, output_dir):
 
     csv_data = [['Loss', 'ε', 'δ']]
     global_steps = 0
+    model = autoencoder if conf.target_epsilon == 0 else autoencoder._module
     for epoch in range(conf.num_epochs):
         autoencoder.train()
         losses = []
@@ -36,7 +37,7 @@ def train_ae(conf, output_dir):
             aeopt.zero_grad()
             reconstructions, posterior = autoencoder(inputs)
             aeloss, log_dict_ae = loss(inputs, reconstructions, posterior, 0, global_steps,
-                                       last_layer=autoencoder._module.get_last_layer(), split="train")
+                                       last_layer=model.get_last_layer(), split="train")
             aeloss.backward()
             aeopt.step()
             losses.append(aeloss.item())

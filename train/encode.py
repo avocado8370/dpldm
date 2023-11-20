@@ -4,6 +4,7 @@ import time
 
 import torch
 import torchvision
+from torch.utils.data import ConcatDataset, DataLoader
 from opacus import PrivacyEngine
 from opacus.validators import ModuleValidator
 from torchvision import transforms, datasets
@@ -51,10 +52,13 @@ def load_first_stage_model(conf, poisson=True):
                                                download=True, transform=transform)
         evalset = torchvision.datasets.CelebA(root='../data', train=False,
                                               download=True, transform=transform)
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-                                              shuffle=True, num_workers=num_workers, pin_memory=True)
-    evalloader = torch.utils.data.DataLoader(evalset, batch_size=batch_size,
-                                             shuffle=True, num_workers=num_workers, pin_memory=True)
+    # trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
+    #                                           shuffle=True, num_workers=num_workers, pin_memory=True)
+    # evalloader = torch.utils.data.DataLoader(evalset, batch_size=batch_size,
+    #                                          shuffle=True, num_workers=num_workers, pin_memory=True)
+    combined_dataset = ConcatDataset([trainset, evalset])
+    combined_loader = DataLoader(combined_dataset, batch_size=batch_size,
+                             shuffle=True, num_workers=num_workers, pin_memory=True)
 
     num_epochs = conf.num_epochs
     delta = conf.delta
@@ -66,10 +70,10 @@ def load_first_stage_model(conf, poisson=True):
     if target_epsilon > 0:
         autoencoder = ModuleValidator.fix(autoencoder)
         aeopt = torch.optim.SGD(autoencoder.parameters(), lr=lr)
-        autoencoder, aeopt, trainloader = privacy_engine.make_private_with_epsilon(
+        autoencoder, aeopt, combined_loader = privacy_engine.make_private_with_epsilon(
             module=autoencoder,
             optimizer=aeopt,
-            data_loader=trainloader,
+            data_loader=combined_loader,
             # noise_multiplier=sigma,
             epochs=num_epochs,
             target_delta=delta,
@@ -79,7 +83,7 @@ def load_first_stage_model(conf, poisson=True):
         )
     else:
         aeopt = torch.optim.Adam(autoencoder.parameters(), lr=lr, betas=(0.5, 0.9))
-    return autoencoder, aeopt, trainloader, evalloader, privacy_engine
+    return autoencoder, aeopt, combined_loader, combined_loader, privacy_engine
 
 
 def load_first_stage(conf, path, poisson=True):
@@ -103,6 +107,7 @@ def encode(conf, path, target_path="", labeled=False):
     is_dp = conf.target_epsilon > 0
     os.makedirs(target_path, exist_ok=True)
     target_path = target_path + '/encoded_dataset.pkl'
+    model = autoencoder if conf.target_epsilon == 0 else autoencoder._module
     with torch.no_grad():
         if labeled:
             for iteration in range(10):
@@ -115,7 +120,7 @@ def encode(conf, path, target_path="", labeled=False):
                         if label == iteration:
                             image = image.to(conf.device)
                             if is_dp:
-                                posterior = autoencoder._module.encode(image)
+                                posterior = model.encode(image)
                             else:
                                 posterior = autoencoder.encode(image)
                             encoded_image = posterior.sample()
@@ -135,7 +140,7 @@ def encode(conf, path, target_path="", labeled=False):
                 for image, label in tqdm(train_loader):
                     image = image.to(conf.device)
                     if is_dp:
-                        posterior = autoencoder._module.encode(image)
+                        posterior = model.encode(image)
                     else:
                         posterior = autoencoder.encode(image)
                     encoded_image = posterior.sample()

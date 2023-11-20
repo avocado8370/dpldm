@@ -11,6 +11,8 @@ from torchvision.utils import save_image
 from tqdm import tqdm
 
 from models.diffusion.ddpm import UNetModel, GaussianDiffusion
+from models.diffusion.diffusion_continuous import DiffusionVPSDE
+from models.diffusion.ncsnpp import NCSNpp
 from train.encode import load_first_stage_model, load_first_stage
 
 
@@ -19,24 +21,20 @@ def load_second_stage_model(conf):
     :param conf:
     :return:
     """
-    u_model = UNetModel(
-        in_channels=conf.unetconfig.in_channels,
-        model_channels=conf.unetconfig.model_channels,
-        out_channels=conf.unetconfig.out_channels,
-        num_res_blocks=conf.unetconfig.num_res_blocks,
-        channel_mult=conf.unetconfig.channel_mult,
-        attention_resolutions=conf.unetconfig.attention_resolutions,
-        conv_resample=conf.unetconfig.conv_resample
+    diffusion_cont = DiffusionVPSDE(conf.diffusion_args)
+    model = NCSNpp(
+        conf,
+        conf.num_input_channels,
+        conf.ch_mult,
+        diffusion_cont
     )
-    u_model.to(conf.device)
-    timesteps = conf.timesteps
-    gaussian_diffusion = GaussianDiffusion(timesteps=timesteps)
-    optimizer = torch.optim.Adam(u_model.parameters(), lr=conf.lr)
-    return gaussian_diffusion, u_model, optimizer
+    model.to(conf.device)
+    optimizer = model.get_optimizer(conf)
+    return model, optimizer, diffusion_cont
 
 
-def train_ddpm(conf_stage1, conf, path):
-    gaussian_diffusion, u_model, optimizer = load_second_stage_model(conf)
+def train_ncsnpp(conf_stage1, conf, path):
+    model, optimizer, diffusion = load_second_stage_model(conf)
     autoencoder, _ = load_first_stage(conf_stage1, path, False)
     batch_size = conf.batch_size
     timesteps = conf.timesteps
@@ -74,7 +72,12 @@ def train_ddpm(conf_stage1, conf, path):
             # sample t uniformally for every example in the batch
             t = torch.randint(0, timesteps, (batch_size,), device=device).long()
 
-            loss = gaussian_diffusion.train_losses(u_model, images, t)
+            loss = model.train_losses(images, {
+                "batch_size": batch_size,
+                "time_eps": 0.01,
+                "iw_sample_q": "reweight_p_samples",
+                "iw_subvp_like_vp_sde": False
+            })
 
             loss.backward()
             optimizer.step()
@@ -83,14 +86,16 @@ def train_ddpm(conf_stage1, conf, path):
 
     for i in range(200):
         print(f"epoch {i}")
-        generated_images = gaussian_diffusion.sample(u_model, conf.resolution, batch_size=30,
-                                                     channels=conf.unetconfig.out_channels)
+        eps, nfe, time_ode_solve = diffusion.sample_model_ode(model, 30,
+                                                      shape=[model.num_input_channels, model.input_size, model.input_size],
+                                                      ode_eps=1e-6, ode_solver_tol=1e-5, enable_autocast=True,
+                                                      temp=1.0)
         # generate new images
         # imgs = generated_images[-1].squeeze()
         # imgs = torch.from_numpy(imgs)
         scale_factor = scale_factor.to("cpu")
         batch_mean = batch_mean.to("cpu")
-        generated_images_last_layer = generated_images[-1]
+        generated_images_last_layer = eps[-1]
         generated_images_last_layer = torch.from_numpy(generated_images_last_layer)
         imgs = (generated_images_last_layer / scale_factor) + batch_mean
 

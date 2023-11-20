@@ -1,0 +1,21 @@
+batch_size: 128
+device: cuda
+num_input_channels: 3
+ch_mult: [1, 2, 2, 4]
+
+diffusion_args:
+  dataset: cifar10
+  num_scales_dae: 3
+  num_channels_dae: 512
+  num_cell_per_scale_dae: 8
+  dropout: 0.2
+  num_preprocess_blocks: 1
+  num_latent_scales: 1
+  mixed_prediction:
+  mixing_logit_init: -6
+  progressive: residual
+  progressive_input: residual
+  progressive_combine: sum
+  embedding_dim: 128
+  embedding_type: positional
+  embedding_scale: 1000
