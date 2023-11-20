@@ -24,6 +24,9 @@ import torch.nn.functional as F
 from torch.cuda.amp import autocast
 import numpy as np
 
+from models.diffusion import up_or_down_sampling
+
+
 def ddpm_conv1x1(in_planes, out_planes, stride=1, bias=True, init_scale=1., padding=0):
   """1x1 convolution with DDPM initialization."""
   conv = nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, padding=padding, bias=bias)
