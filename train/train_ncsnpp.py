@@ -23,7 +23,7 @@ def load_second_stage_model(conf):
     """
     diffusion_cont = DiffusionVPSDE(conf.diffusion_args)
     model = NCSNpp(
-        conf,
+        conf.diffusion_args,
         conf.num_input_channels,
         conf.ch_mult,
         diffusion_cont
@@ -37,7 +37,7 @@ def train_ncsnpp(conf_stage1, conf, path):
     model, optimizer, diffusion = load_second_stage_model(conf)
     autoencoder, _ = load_first_stage(conf_stage1, path, False)
     batch_size = conf.batch_size
-    timesteps = conf.timesteps
+    # timesteps = conf.timesteps
     device = conf.device
     os.makedirs(conf.zpath, exist_ok=True)
     pkl_file = conf.encodedpath
@@ -70,14 +70,15 @@ def train_ncsnpp(conf_stage1, conf, path):
             images = images.to(device)
             # print(images.size())
             # sample t uniformally for every example in the batch
-            t = torch.randint(0, timesteps, (batch_size,), device=device).long()
+            # t = torch.randint(0, timesteps, (batch_size,), device=device).long()
+            class ArgsWrapper():
+                def __init__(self, batch_size, time_eps, iw_sample_q, iw_subvp_like_vp_sde):
+                    self.batch_size = batch_size
+                    self.time_eps = time_eps
+                    self.iw_sample_q = iw_sample_q
+                    self.iw_subvp_like_vp_sde = iw_subvp_like_vp_sde
 
-            loss = model.train_losses(images, {
-                "batch_size": batch_size,
-                "time_eps": 0.01,
-                "iw_sample_q": "reweight_p_samples",
-                "iw_subvp_like_vp_sde": False
-            })
+            loss = model.train_losses(images, ArgsWrapper(batch_size=batch_size, time_eps=0.01, iw_sample_q="ll_iw", iw_subvp_like_vp_sde=False))
 
             loss.backward()
             optimizer.step()

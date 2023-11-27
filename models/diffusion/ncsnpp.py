@@ -61,8 +61,9 @@ class NCSNpp(nn.Module):
         self.num_resolutions = num_resolutions = self.num_scales
         assert len(ch_mult) == self.num_scales
         self.input_size = get_input_size(self.dataset) // 2 ** (args.num_preprocess_blocks + args.num_latent_scales - 1)
+        print("input_size: ", self.input_size)
         self.all_resolutions = all_resolutions = [self.input_size // (2 ** i) for i in range(num_resolutions)]
-
+        print("all_resolutions: ", self.all_resolutions)
         self.mixed_prediction = args.mixed_prediction  # This enables mixed prediction
         if self.mixed_prediction:
             init = args.mixing_logit_init * torch.ones(size=[1, num_input_channels, 1, 1])

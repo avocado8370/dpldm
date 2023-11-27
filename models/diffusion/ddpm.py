@@ -67,8 +67,9 @@ def norm_layer(channels):
 
 # Residual block
 class ResidualBlock(TimestepBlock):
-    def __init__(self, in_channels, out_channels, time_channels, dropout):
+    def __init__(self, in_channels, out_channels, time_channels, dropout, use_scale_shift_norm=False):
         super().__init__()
+        self.use_scale_shift_norm = use_scale_shift_norm
         self.conv1 = nn.Sequential(
             norm_layer(in_channels),
             nn.SiLU(),
@@ -100,8 +101,13 @@ class ResidualBlock(TimestepBlock):
         """
         h = self.conv1(x)
         # Add time step embeddings
-        h += self.time_emb(t)[:, :, None, None]
-        h = self.conv2(h)
+        emb_out = self.time_emb(t)[:, :, None, None]
+        if self.use_scale_shift_norm:
+            scale, shift = torch.chunk(emb_out, 2, dim=1)
+            h = self.conv2[0](h) * (1 + scale) + shift  # GroupNorm(h)(w+1) + b
+            h = self.conv2[1:](h)
+        else:
+            h = self.conv2(h + emb_out)
         return h + self.shortcut(x)
 
 
@@ -387,15 +393,24 @@ class GaussianDiffusion:
 
     # compute predicted mean and variance of p(x_{t-1} | x_t)
     def p_mean_variance(self, model, x_t, t, clip_denoised=True):
-        # predict noise using model
-        pred_noise = model(x_t, t)
+        # predict noise and variance_vector using model
+        model_output = model(x_t, t)
+        pred_noise, pred_variance_v = torch.chunk(model_output, 2, dim=1)
+
+        # compute predicted variance by eq(15) in the paper
+        min_log_variance = self._extract(self.posterior_log_variance_clipped, t, x_t.shape)  # beta_t~
+        max_log_variance = self._extract(torch.log(self.betas), t, x_t.shape)  # beta_t
+        # The predict value is in [-1, 1], we should convert it to [0, 1]
+        frac = (pred_variance_v + 1.) / 2.
+        model_log_variance = frac * max_log_variance + (1. - frac) * min_log_variance
+        model_variance = torch.exp(model_log_variance)
         # get the predicted x_0: different from the algorithm2 in the paper
         x_recon = self.predict_start_from_noise(x_t, t, pred_noise)
         if clip_denoised:
             x_recon = torch.clamp(x_recon, min=-1., max=1.)
-        model_mean, posterior_variance, posterior_log_variance = \
+        model_mean, _, _ = \
             self.q_posterior_mean_variance(x_recon, x_t, t)
-        return model_mean, posterior_variance, posterior_log_variance
+        return model_mean, model_variance, model_log_variance
 
     # denoise_step: sample x_{t-1} from x_t and pred_noise
     @torch.no_grad()
@@ -428,14 +443,169 @@ class GaussianDiffusion:
     def sample(self, model, image_size, batch_size=8, channels=3):
         return self.p_sample_loop(model, shape=(batch_size, channels, image_size, image_size))
 
+    # use fast sample of DDPM+
+    @torch.no_grad()
+    def fast_sample(
+            self,
+            model,
+            image_size,
+            batch_size=8,
+            channels=3,
+            timestep_respacing="50",
+            clip_denoised=True):
+        # make timestep sequence
+        # https://github.com/openai/improved-diffusion/blob/main/improved_diffusion/respace.py
+        section_counts = [int(x) for x in timestep_respacing.split(",")]
+        size_per = self.timesteps // len(section_counts)
+        extra = self.timesteps % len(section_counts)
+        start_idx = 0
+        timestep_seq = []
+        for i, section_count in enumerate(section_counts):
+            size = size_per + (1 if i < extra else 0)
+            if size < section_count:
+                raise ValueError(
+                    f"cannot divide section of {size} steps into {section_count}"
+                )
+            if section_count <= 1:
+                frac_stride = 1
+            else:
+                frac_stride = (size - 1) / (section_count - 1)
+            cur_idx = 0.0
+            taken_steps = []
+            for _ in range(section_count):
+                taken_steps.append(start_idx + round(cur_idx))
+                cur_idx += frac_stride
+            timestep_seq += taken_steps
+            start_idx += size
+        total_timesteps = len(timestep_seq)
+        # previous sequence
+        timestep_prev_seq = np.append(np.array([-1]), timestep_seq[:-1])
+
+        device = next(model.parameters()).device
+        # start from pure noise (for each example in the batch)
+        sample_img = torch.randn((batch_size, channels, image_size, image_size), device=device)
+        for i in tqdm(reversed(range(0, total_timesteps)), desc='sampling loop time step', total=total_timesteps):
+            t = torch.full((batch_size,), timestep_seq[i], device=device, dtype=torch.long)
+            prev_t = torch.full((batch_size,), timestep_prev_seq[i], device=device, dtype=torch.long)
+
+            # get current and previous alpha_cumprod
+            alpha_cumprod_t = self._extract(self.alphas_cumprod, t, sample_img.shape)
+            alpha_cumprod_t_prev = self._extract(self.alphas_cumprod_prev, prev_t + 1, sample_img.shape)
+
+            # predict noise using model
+            model_output = model(sample_img, t)
+            pred_noise, pred_variance_v = torch.chunk(model_output, 2, dim=1)
+            # compute beta_t and beta_t~ by eq(19) in the paper
+            new_beta_t = 1. - alpha_cumprod_t / alpha_cumprod_t_prev
+            new_beta_t2 = new_beta_t * (1. - alpha_cumprod_t_prev) / (1. - alpha_cumprod_t)
+            min_log_variance = torch.log(new_beta_t2)  # beta_t~
+            max_log_variance = torch.log(new_beta_t)  # beta_t
+            # compute predicted variance by eq(15) in the paper
+            # The predict value is in [-1, 1], we should convert it to [0, 1]
+            frac = (pred_variance_v + 1.) / 2.
+            model_log_variance = frac * max_log_variance + (1. - frac) * min_log_variance
+
+            # get the predicted x_0: different from the algorithm2 in the paper
+            x_recon = self.predict_start_from_noise(sample_img, t, pred_noise)
+            if clip_denoised:
+                x_recon = torch.clamp(x_recon, min=-1., max=1.)
+            mean_coef1 = (new_beta_t * torch.sqrt(alpha_cumprod_t_prev) / (1.0 - alpha_cumprod_t))
+            mean_coef2 = ((1.0 - alpha_cumprod_t_prev) * torch.sqrt(1.0 - new_beta_t) / (1.0 - alpha_cumprod_t))
+            model_mean = mean_coef1 * x_recon + mean_coef2 * sample_img
+
+            noise = torch.randn_like(sample_img)
+            # no noise when t == 0
+            nonzero_mask = ((t != 0).float().view(-1, *([1] * (len(sample_img.shape) - 1))))
+            # compute x_{t-1}
+            x_prev = model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise
+
+            sample_img = x_prev
+
+        return sample_img.cpu().numpy()
     # compute train losses
+    # def train_losses(self, model, x_start, t):
+    #     # generate random noise
+    #     noise = torch.randn_like(x_start)
+    #     # get x_t
+    #     x_noisy = self.q_sample(x_start, t, noise=noise)
+    #     predicted_noise = model(x_noisy, t)
+    #     loss = F.mse_loss(noise, predicted_noise)
+    #     return loss
     def train_losses(self, model, x_start, t):
         # generate random noise
         noise = torch.randn_like(x_start)
         # get x_t
         x_noisy = self.q_sample(x_start, t, noise=noise)
-        predicted_noise = model(x_noisy, t)
-        loss = F.mse_loss(noise, predicted_noise)
+
+        # predict
+        model_output = model(x_noisy, t)
+        pred_noise, pred_variance_v = torch.chunk(model_output, 2, dim=1)
+
+        # compute VLB loss
+        # only learn variance, but use frozen predicted noise
+        frozen_output = torch.cat([pred_noise.detach(), pred_variance_v], dim=1)
+        # ground truth
+        true_mean, _, true_log_variance_clipped = self.q_posterior_mean_variance(x_start, x_noisy, t)
+        # prediction
+        model_mean, _, model_log_variance = self.p_mean_variance(
+            lambda *args, r=frozen_output: r,  # use a simple lambda
+            x_noisy,
+            t,
+            clip_denoised=False
+        )
+        # for t > 0, compute KL
+        kl = normal_kl(true_mean, true_log_variance_clipped, model_mean, model_log_variance)
+        kl = torch.mean(kl, dim=[1, 2, 3]) / np.log(2.0)  # use 2 for log base
+        # for t = 0, compute NLL
+        decoder_nll = -discretized_gaussian_log_likelihood(x_start, model_mean, 0.5 * model_log_variance)
+        decoder_nll = torch.mean(decoder_nll, dim=[1, 2, 3]) / np.log(2.0)
+        vlb_loss = torch.where((t == 0), decoder_nll, kl)
+        # reweight VLB
+        vlb_loss *= self.timesteps / 1000
+
+        # compute MSE loss
+        mse_loss = torch.mean((pred_noise - noise) ** 2, dim=[1, 2, 3])
+
+        loss = (mse_loss + vlb_loss).mean()
         return loss
 
+# some helpful functions to compute loss
+def normal_kl(mean1, logvar1, mean2, logvar2):
+    """
+    KL divergence between normal distributions parameterized by mean and log-variance.
+    """
+    return 0.5 * (-1.0 + logvar2 - logvar1 + torch.exp(logvar1 - logvar2) + \
+                  ((mean1 - mean2) ** 2) * torch.exp(-logvar2))
 
+
+def approx_standard_normal_cdf(x):
+    """
+    A fast approximation of the cumulative distribution function of the
+    standard normal.
+    """
+    return 0.5 * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * (x ** 3))))
+
+
+def discretized_gaussian_log_likelihood(x, means, log_scales):
+    """
+    Compute the log-likelihood of a Gaussian distribution discretizing to a
+    given image, using the eq(13) of the paper DDPM.
+    """
+    assert x.shape == means.shape == log_scales.shape
+
+    centered_x = x - means
+    inv_stdv = torch.exp(-log_scales)
+    plus_in = inv_stdv * (centered_x + 1. / 255.)
+    cdf_plus = approx_standard_normal_cdf(plus_in)
+    min_in = inv_stdv * (centered_x - 1. / 255.)
+    cdf_min = approx_standard_normal_cdf(min_in)
+    log_cdf_plus = torch.log(cdf_plus.clamp(min=1e-12))
+    log_one_minus_cdf_min = torch.log((1.0 - cdf_min).clamp(min=1e-12))
+    cdf_delta = cdf_plus - cdf_min
+
+    log_probs = torch.where(x < -0.999, log_cdf_plus,
+        torch.where(x > 0.999,
+            log_one_minus_cdf_min,
+            torch.log(cdf_delta.clamp(min=1e-12))))
+
+    return log_probs

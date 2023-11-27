@@ -9,6 +9,7 @@ from train.encode import encode
 from train.sample import sample
 from train.train_ae import train_ae
 from train.train_ddpm import train_ddpm
+from train.train_ncsnpp import train_ncsnpp
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("DPLDM")
@@ -71,7 +72,7 @@ if __name__ == '__main__':
         conf_stage1 = OmegaConf.load(f'{args.config_stage1}')
         conf = OmegaConf.load(f'{args.config}')
         path = args.path
-        train_ddpm(conf_stage1, conf, path)
+        train_ncsnpp(conf_stage1, conf, path)
     elif args.subcommand == 'sample':
         print('Running sample with argument:', args.config)
         conf_stage1 = OmegaConf.load(f'{args.config_stage1}')
