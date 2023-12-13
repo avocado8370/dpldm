@@ -13,12 +13,12 @@ c: 1
 sigma: 1
 batch_size: 96
 device: cuda
+lpips_weight: 0.5
+lpips_start: 15
 lossconfig:
-  target: models.losses.LPIPSWithDiscriminator
+  target: models.losses.LPIPSLoss
   params:
-    disc_start: 50001
     kl_weight: 0.000001
-    disc_weight: 0.5
 
 ddconfig:
   double_z: True

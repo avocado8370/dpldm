@@ -3,7 +3,7 @@ from abc import abstractmethod, ABC
 
 import numpy as np
 import torch
-from scipy.integrate import odeint
+from torchdiffeq import odeint
 from torch.cuda.amp import autocast
 
 from models.distribution.distribution import log_p_var_normal, log_p_standard_normal

@@ -129,7 +129,7 @@ def upsample_conv_2d(x, w, k=None, factor=2, gain=1):
   stride = (factor, factor)
 
   # Determine data dimensions.
-  stride = [1, 1, factor, factor]
+  # stride = [1, 1, factor, factor]
   output_shape = ((_shape(x, 2) - 1) * factor + convH, (_shape(x, 3) - 1) * factor + convW)
   output_padding = (output_shape[0] - (_shape(x, 2) - 1) * stride[0] - convH,
                     output_shape[1] - (_shape(x, 3) - 1) * stride[1] - convW)

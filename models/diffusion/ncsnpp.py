@@ -27,6 +27,7 @@ import numpy as np
 
 from .layerspp import default_init
 from ..util import get_input_size, init_temb_fun, mask_inactive_variables, get_mixed_prediction
+
 try:
     from apex.optimizers import FusedAdam
 except ImportError:
@@ -64,6 +65,7 @@ class NCSNpp(nn.Module):
         print("input_size: ", self.input_size)
         self.all_resolutions = all_resolutions = [self.input_size // (2 ** i) for i in range(num_resolutions)]
         print("all_resolutions: ", self.all_resolutions)
+
         self.mixed_prediction = args.mixed_prediction  # This enables mixed prediction
         if self.mixed_prediction:
             init = args.mixing_logit_init * torch.ones(size=[1, num_input_channels, 1, 1])
@@ -117,26 +119,14 @@ class NCSNpp(nn.Module):
             pyramid_downsample = functools.partial(layerspp.Downsample,
                                                    fir=fir, fir_kernel=fir_kernel, with_conv=True)
 
-        if resblock_type == 'ddpm':
-            ResnetBlock = functools.partial(ResnetBlockDDPM,
-                                            act=act,
-                                            dropout=dropout,
-                                            init_scale=init_scale,
-                                            skip_rescale=skip_rescale,
-                                            temb_dim=self.embedding_dim * 4)
-
-        elif resblock_type == 'biggan':
-            ResnetBlock = functools.partial(ResnetBlockBigGAN,
-                                            act=act,
-                                            dropout=dropout,
-                                            fir=fir,
-                                            fir_kernel=fir_kernel,
-                                            init_scale=init_scale,
-                                            skip_rescale=skip_rescale,
-                                            temb_dim=self.embedding_dim * 4)
-
-        else:
-            raise ValueError(f'resblock type {resblock_type} unrecognized.')
+        ResnetBlock = functools.partial(ResnetBlockBigGAN,
+                                        act=act,
+                                        dropout=dropout,
+                                        fir=fir,
+                                        fir_kernel=fir_kernel,
+                                        init_scale=init_scale,
+                                        skip_rescale=skip_rescale,
+                                        temb_dim=self.embedding_dim * 4)
 
         # Downsampling block
 
@@ -231,12 +221,12 @@ class NCSNpp(nn.Module):
             modules.append(nn.GroupNorm(num_groups=min(in_ch // 4, 32),
                                         num_channels=in_ch, eps=1e-6))
             modules.append(conv3x3(in_ch, channels, init_scale=init_scale))
-
         self.all_modules = nn.ModuleList(modules)
 
     def forward(self, x, t):
         # timestep/noise_level embedding; only for continuous training
         modules = self.all_modules
+
         m_idx = 0
 
         # time embedding
@@ -267,6 +257,7 @@ class NCSNpp(nn.Module):
             for i_block in range(self.num_res_blocks):
                 h = modules[m_idx](hs[-1], temb)
                 m_idx += 1
+                print(h.shape)
                 if h.shape[-1] in self.attn_resolutions:
                     h = modules[m_idx](h)
                     m_idx += 1
@@ -278,6 +269,7 @@ class NCSNpp(nn.Module):
                     h = modules[m_idx](hs[-1])
                     m_idx += 1
                 else:
+                    print(m_idx, modules[m_idx])
                     h = modules[m_idx](hs[-1], temb)
                     m_idx += 1
 

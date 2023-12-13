@@ -27,7 +27,7 @@ def get_input_size(dataset):
     if dataset in {'mnist', 'omniglot'}:
         return 32
     elif dataset == 'cifar10':
-        return 32
+        return 16
     elif dataset.startswith('celeba') or dataset.startswith('imagenet') or dataset.startswith('lsun'):
         size = int(dataset.split('_')[-1])
         return size

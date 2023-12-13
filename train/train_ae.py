@@ -1,6 +1,5 @@
 import csv
 import os
-import time
 
 import numpy as np
 import torch
@@ -36,8 +35,7 @@ def train_ae(conf, output_dir):
             inputs = inputs.to(conf.device)
             aeopt.zero_grad()
             reconstructions, posterior = autoencoder(inputs)
-            aeloss, log_dict_ae = loss(inputs, reconstructions, posterior, 0, global_steps,
-                                       last_layer=model.get_last_layer(), split="train")
+            aeloss, log_dict_ae = loss(inputs, reconstructions, posterior, split="train")
             aeloss.backward()
             aeopt.step()
             losses.append(aeloss.item())
